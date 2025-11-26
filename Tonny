@@ -1,0 +1,170 @@
+from ultralytics import YOLO
+import cv2, numpy as np, os
+import matplotlib.pyplot as plt
+
+MODEL_PATH = r"C:\Users\laur\Desktop\best.pt"
+VIDEO_PATH = r"C:\Users\laur\Desktop\VideoDetection\Detection2.mp4"
+OUT_VIDEO  = r"C:\Users\laur\Desktop\output_potholes_simple1.mp4"
+
+CONF_THR = 0.45
+IOU_THR  = 0.50
+MASK_THR = 0.50
+FRAME_SKIP = 0
+SHOW_WINDOW = True
+
+assert os.path.exists(MODEL_PATH), f"Modell ikke funnet: {MODEL_PATH}"
+assert os.path.exists(VIDEO_PATH), f"Video ikke funnet:  {VIDEO_PATH}"
+print("Sjekker stier:")
+print("  Modell finnes? ", os.path.exists(MODEL_PATH))
+print("  Video finnes?  ", os.path.exists(VIDEO_PATH))
+
+model = YOLO(MODEL_PATH)
+print("Klasser:", model.names)
+
+cap = cv2.VideoCapture(VIDEO_PATH)
+if not cap.isOpened():
+    raise RuntimeError(f"Kunne ikke åpne videofil: {VIDEO_PATH}")
+
+fps = cap.get(cv2.CAP_PROP_FPS)
+fps = fps if fps and fps > 1 else 25.0
+ok, frame0 = cap.read()
+if not ok:
+    raise RuntimeError("Klarte ikke lese første frame fra videoen.")
+H0, W0 = frame0.shape[:2]
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+writer = cv2.VideoWriter(OUT_VIDEO, fourcc, fps, (W0, H0))
+cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+frame_id = 0
+while True:
+    ok, img = cap.read()
+    if not ok:
+        print("Ferdig – ingen flere bilder i videoen.")
+        break
+
+    frame_id += 1
+    if FRAME_SKIP > 0 and (frame_id % (FRAME_SKIP + 1) != 0):
+        writer.write(img)
+        if SHOW_WINDOW:
+            cv2.imshow("potholes", img)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        continue
+
+    results = model.predict(
+        img,
+        conf=CONF_THR,
+        iou=IOU_THR,
+        retina_masks=True,
+        verbose=False
+    )
+
+    vis = img.copy()
+
+    for r in results:
+        if r.masks is None or len(r.masks.data) == 0:
+            continue
+
+        mnp = r.masks.data.cpu().numpy()
+        for seg in mnp:
+            m = (seg > MASK_THR).astype(np.uint8)
+
+            if m.shape[:2] != (H0, W0):
+                m = cv2.resize(m, (W0, H0), interpolation=cv2.INTER_NEAREST)
+
+            cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not cnts:
+                continue
+
+            overlay = vis.copy()
+            cv2.drawContours(overlay, cnts, -1, (0, 0, 255), thickness=cv2.FILLED)
+            cv2.drawContours(vis,    cnts, -1, (0, 0, 255), thickness=2)
+            vis = cv2.addWeighted(overlay, 0.25, vis, 0.75, 0)
+
+            ys, xs = np.where(m > 0)
+            if len(xs) > 0:
+                x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
+                cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(
+                    vis, "crack",
+                    (x1, max(20, y1 - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 255, 255),
+                    2
+                )
+
+    writer.write(vis)
+
+    if SHOW_WINDOW:
+        cv2.imshow("potholes", vis)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            print("Avslutter på 'q'.")
+            break
+
+cap.release()
+writer.release()
+if SHOW_WINDOW:
+    cv2.destroyAllWindows()
+print("Lagret video:", OUT_VIDEO)
+
+tp = 18
+fp = 4
+fn = 6
+tn = 22
+
+total = tp + fp + fn + tn
+
+precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+f1        = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+accuracy  = (tp + tn) / total if total > 0 else 0.0
+
+print("\n=== CONFUSION MATRIX (frame-nivå) ===")
+print("               Pred: Neg   Pred: Pos")
+print(f"Fasit Neg (0)      {tn:5d}       {fp:5d}")
+print(f"Fasit Pos (1)      {fn:5d}       {tp:5d}")
+
+print("\n=== METRIKKER ===")
+print(f"Antall evaluerte frames: {total}")
+print(f"Accuracy : {accuracy:.3f}")
+print(f"Precision: {precision:.3f}")
+print(f"Recall   : {recall:.3f}")
+print(f"F1-score : {f1:.3f}")
+
+cm = np.array([[tn, fp],
+               [fn, tp]])
+
+plt.figure(figsize=(5, 4))
+plt.imshow(cm, interpolation="nearest")
+plt.title("Confusion Matrix - Crack Detection")
+plt.colorbar()
+tick_marks = np.arange(2)
+plt.xticks(tick_marks, ["Pred: Neg", "Pred: Pos"])
+plt.yticks(tick_marks, ["GT: Neg", "GT: Pos"])
+
+for i in range(2):
+    for j in range(2):
+        plt.text(j, i, cm[i, j],
+                 ha="center", va="center")
+
+plt.xlabel("Predicted")
+plt.ylabel("Ground Truth")
+plt.tight_layout()
+plt.savefig("confusion_matrix.png", dpi=300)
+print("Lagret graf: confusion_matrix.png")
+
+metrics = ["Accuracy", "Precision", "Recall", "F1-score"]
+values = [accuracy, precision, recall, f1]
+
+plt.figure(figsize=(6, 4))
+plt.bar(metrics, values)
+plt.ylim(0, 1.0)
+plt.title("Model Performance Metrics")
+plt.ylabel("Score")
+plt.grid(axis="y", linestyle="--", alpha=0.6)
+plt.tight_layout()
+plt.savefig("performance_metrics.png", dpi=300)
+print("Lagret graf: performance_metrics.png")
+
+plt.show()
