@@ -1,0 +1,28 @@
+# Eksempel: utskrift av confusion matrix + metrikker for crack detection
+# Du kan ta screenshot av outputen og bruke i rapporten.
+
+# Eksempel-tall fra en hypotetisk evaluering
+tp = 18   # True Positives  (modell fant sprekk, og det var faktisk sprekk)
+fp = 4    # False Positives (modell trodde det var sprekk, men det var ikke sprekk)
+fn = 6    # False Negatives (modell overså sprekk)
+tn = 22   # True Negatives  (modell sa "ingen sprekk", og det stemte)
+
+total = tp + fp + fn + tn
+
+precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+f1        = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+accuracy  = (tp + tn) / total if total > 0 else 0.0
+
+print("=== CONFUSION MATRIX (frame-nivå) ===")
+print("               Pred: Neg   Pred: Pos")
+print(f"Fasit Neg (0)      {tn:5d}       {fp:5d}")
+print(f"Fasit Pos (1)      {fn:5d}       {tp:5d}")
+
+print("\n=== METRIKKER ===")
+print(f"Antall evaluerte frames: {total}")
+print(f"Accuracy : {accuracy:.3f}")
+print(f"Precision: {precision:.3f}")
+print(f"Recall   : {recall:.3f}")
+print(f"F1-score : {f1:.3f}")
+
